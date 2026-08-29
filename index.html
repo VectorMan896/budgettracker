@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="description" content="Track spending against monthly budgets, watch your balance, and see how long your money lasts." />
+  <title>BudgetTracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">💰</span>
+        <div>
+          <h1>BudgetTracker</h1>
+          <p class="brand-sub" id="cycleSub">This cycle</p>
+        </div>
+      </div>
+      <button class="icon-btn" id="quickAddBtn" title="Add a transaction" aria-label="Add transaction">＋</button>
+    </header>
+
+    <div id="alertBanner" class="alert-banner hidden" role="alert"></div>
+
+    <main id="views">
+      <!-- DASHBOARD -->
+      <section class="view" data-view="dashboard">
+        <div class="hero" id="hero"></div>
+        <div class="stat-grid" id="statGrid"></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Spending this cycle</h2>
+            <span class="hint" id="dailyChartHint"></span>
+          </div>
+          <div id="dailyChart" class="chart"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Where the money went</h2>
+            <span class="hint" id="catChartHint"></span>
+          </div>
+          <div id="catChart" class="chart"></div>
+        </div>
+      </section>
+
+      <!-- LOG -->
+      <section class="view hidden" data-view="log">
+        <div class="card">
+          <div class="card-head"><h2>Add transaction</h2></div>
+          <div class="segmented" id="typeToggle">
+            <button type="button" class="seg active" data-type="expense">− Expense</button>
+            <button type="button" class="seg" data-type="income">＋ Income</button>
+          </div>
+          <form id="txForm" class="form">
+            <label class="field">
+              <span>Amount (<span class="cur-label">MT</span>)</span>
+              <input type="number" step="0.01" inputmode="decimal" id="txAmount" placeholder="0" required />
+            </label>
+            <label class="field">
+              <span>Category</span>
+              <select id="txCategory" required></select>
+            </label>
+            <label class="field">
+              <span>Note <em>optional</em></span>
+              <input type="text" id="txNote" placeholder="e.g. Credelec recharge" />
+            </label>
+            <label class="field">
+              <span>Date &amp; time</span>
+              <input type="datetime-local" id="txTime" required />
+            </label>
+            <button type="submit" class="btn btn-primary" id="txSubmit">Save expense</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>History</h2>
+            <span class="hint" id="historyCount"></span>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+      </section>
+
+      <!-- BUDGETS -->
+      <section class="view hidden" data-view="budgets">
+        <div class="card summary-card">
+          <div class="summary-row">
+            <div>
+              <span class="summary-label">Spent this cycle</span>
+              <span class="summary-value" id="spentTotal">–</span>
+            </div>
+            <div>
+              <span class="summary-label">Budgeted</span>
+              <span class="summary-value" id="budgetTotal">–</span>
+            </div>
+          </div>
+          <div class="progress"><i id="budgetProgress"></i></div>
+          <p class="hint" id="budgetHint"></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Categories</h2>
+            <button class="btn btn-sm" id="addCatBtn">＋ Add</button>
+          </div>
+          <div id="catList" class="cat-list"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view hidden" data-view="settings">
+        <div class="card">
+          <div class="card-head"><h2>Budget cycle &amp; balance</h2></div>
+          <form id="settingsForm" class="form">
+            <label class="field">
+              <span>Current balance / cash on hand (<span class="cur-label">MT</span>)</span>
+              <input type="number" step="0.01" inputmode="decimal" id="setStartBal" />
+              <em class="sub-note" id="balNote"></em>
+            </label>
+            <label class="field">
+              <span>Budget cycle resets on day</span>
+              <select id="setMonthStart"></select>
+            </label>
+            <label class="field">
+              <span>Base spending rate on the last</span>
+              <select id="setWindow">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+                <option value="0">This cycle</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Currency label</span>
+              <input type="text" id="setCurrency" />
+            </label>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Alerts</h2></div>
+          <form id="alertForm" class="form">
+            <label class="field">
+              <span>Warn when balance falls below (<span class="cur-label">MT</span>)</span>
+              <input type="number" step="1" inputmode="decimal" id="setLowBal" />
+            </label>
+            <label class="field">
+              <span>…or when runway falls below (days)</span>
+              <input type="number" step="1" inputmode="decimal" id="setRunwayDays" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="setOverBudget" />
+              <span>Warn when projected spending exceeds the cycle budget</span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="setNotify" />
+              <span>Enable browser notifications for alerts</span>
+            </label>
+            <button type="submit" class="btn btn-primary">Save settings</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Backup &amp; data</h2></div>
+          <div class="btn-col">
+            <button class="btn" id="exportBtn">⬇ Export data (JSON)</button>
+            <label class="btn" for="importFile">⬆ Import data (JSON)</label>
+            <input type="file" id="importFile" accept="application/json" hidden />
+            <button class="btn btn-danger" id="resetBtn">Reset all data</button>
+          </div>
+          <p class="hint">Data is stored only on this device, in your browser. Export regularly to keep a backup.</p>
+        </div>
+
+        <div class="card about">
+          <p><strong>BudgetTracker</strong> · offline-first · no account needed.</p>
+          <p class="hint">Add to Home Screen from your browser menu to use it like an app.</p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="tab-bar">
+      <button class="tab active" data-nav="dashboard"><span>◈</span>Home</button>
+      <button class="tab" data-nav="log"><span>≣</span>Log</button>
+      <button class="tab" data-nav="budgets"><span>◑</span>Budgets</button>
+      <button class="tab" data-nav="settings"><span>⋯</span>Settings</button>
+    </nav>
+  </div>
+
+  <!-- Category editor modal -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="card-head">
+        <h2 id="modalTitle">Category</h2>
+        <button class="icon-btn" id="modalClose" aria-label="Close">✕</button>
+      </div>
+      <form id="catForm" class="form">
+        <input type="hidden" id="catId" />
+        <div class="segmented" id="catTypeToggle">
+          <button type="button" class="seg active" data-ctype="expense">Expense</button>
+          <button type="button" class="seg" data-ctype="income">Income</button>
+        </div>
+        <div class="row">
+          <label class="field" style="flex:0 0 84px">
+            <span>Icon</span>
+            <input type="text" id="catIcon" maxlength="2" placeholder="🛒" />
+          </label>
+          <label class="field">
+            <span>Name</span>
+            <input type="text" id="catName" required />
+          </label>
+        </div>
+        <label class="field" id="budgetField">
+          <span>Monthly budget (<span class="cur-label">MT</span>)</span>
+          <input type="number" step="1" inputmode="decimal" id="catBudget" placeholder="0" />
+        </label>
+        <div class="field">
+          <span>Colour</span>
+          <div class="swatches" id="swatches"></div>
+        </div>
+        <div class="btn-col">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-danger" id="catDelete">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
