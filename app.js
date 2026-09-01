@@ -109,6 +109,16 @@ function totalBudget() {
 }
 function spentThisCycle() { return sumExpense(txInCycle()); }
 function incomeThisCycle() { return sumIncome(txInCycle()); }
+// Spending only in categories that actually have a budget (envelope view).
+function budgetedSpentThisCycle() {
+  const budgeted = new Set(state.categories.filter(c => c.type === 'expense' && (c.budget || 0) > 0).map(c => c.id));
+  return txInCycle().filter(x => x.type === 'expense' && budgeted.has(x.categoryId)).reduce((s, x) => s + x.amount, 0);
+}
+
+// Guards against nonsense from a partial first day / lumpy one-off transactions.
+const SMOOTH_DAYS = 5;      // min days used to derive a daily burn rate
+const PROJECT_MIN_DAYS = 2; // don't extrapolate a cycle projection before this
+const RUNWAY_MIN_DAYS = 3;  // don't fire a low-runway alert before this
 
 function spentByCategory() {
   const map = {};
@@ -126,7 +136,7 @@ function avgDailySpend() {
   const now = Date.now();
   let fromT, days;
   if (win > 0) { fromT = now - win * DAY; days = win; }
-  else { const { start } = cycleBounds(); fromT = start.getTime(); days = Math.max(1, (now - fromT) / DAY); }
+  else { const { start } = cycleBounds(); fromT = start.getTime(); days = Math.max(SMOOTH_DAYS, (now - fromT) / DAY); }
   const spent = state.transactions
     .filter(x => x.type === 'expense' && t(x.t) >= fromT && t(x.t) <= now)
     .reduce((s, x) => s + x.amount, 0);
@@ -146,23 +156,25 @@ function cycleProjection() {
   const { start, end } = cycleBounds();
   const now = Date.now();
   const totalDays = (end.getTime() - start.getTime()) / DAY;
-  const elapsed = Math.max(0.5, (now - start.getTime()) / DAY);
+  const elapsed = (now - start.getTime()) / DAY;
   const daysLeft = Math.max(0, (end.getTime() - now) / DAY);
   const spent = spentThisCycle();
+  const budgetedSpent = budgetedSpentThisCycle();
   const budget = totalBudget();
-  const projected = spent / Math.min(elapsed, totalDays) * totalDays;
-  return { start, end, totalDays, elapsed, daysLeft, spent, budget, projected };
+  const canProject = elapsed >= PROJECT_MIN_DAYS;
+  const projected = canProject ? budgetedSpent / Math.min(elapsed, totalDays) * totalDays : null;
+  return { start, end, totalDays, elapsed, daysLeft, spent, budgetedSpent, budget, canProject, projected };
 }
 
 function alertLevel() {
   const s = state.settings;
   const { days, bal } = runway();
-  const { projected, budget } = cycleProjection();
+  const p = cycleProjection();
   const hasData = state.transactions.length > 0 || s.startingBalance > 0;
   if (!hasData) return 'none';
-  if (s.lowBalance > 0 && bal < s.lowBalance) return 'bad';
-  if (s.runwayDays > 0 && days < s.runwayDays) return 'bad';
-  if (s.overBudgetWarn && budget > 0 && projected > budget) return 'warn';
+  if (s.startingBalance > 0 && s.lowBalance > 0 && bal < s.lowBalance) return 'bad';
+  if (s.startingBalance > 0 && p.elapsed >= RUNWAY_MIN_DAYS && bal > 0 && s.runwayDays > 0 && days < s.runwayDays) return 'bad';
+  if (s.overBudgetWarn && p.budget > 0 && (p.budgetedSpent > p.budget || (p.canProject && p.projected > p.budget))) return 'warn';
   return 'good';
 }
 const barColor = (pct) => pct >= 1 ? 'var(--bad)' : pct >= 0.8 ? 'var(--warn)' : 'var(--accent)';
@@ -196,16 +208,23 @@ function renderHero() {
     return;
   }
   if (p.budget > 0) {
-    const pct = p.spent / p.budget;
-    const projPct = p.projected / p.budget;
-    const lvl = projPct > 1 ? 'bad' : projPct > 0.9 ? 'warn' : 'good';
-    const ringTxt = projPct > 1 ? 'Over budget' : projPct > 0.9 ? 'Near limit' : 'On track';
+    const spentB = p.budgetedSpent;
+    const pct = spentB / p.budget;
+    const over = spentB > p.budget || (p.canProject && p.projected > p.budget);
+    const near = !over && (pct >= 0.9 || (p.canProject && p.projected > p.budget * 0.9));
+    const lvl = over ? 'bad' : near ? 'warn' : 'good';
+    const ringTxt = over ? 'Over budget' : near ? 'Near limit' : 'On track';
+    const paceLine = p.canProject
+      ? `On pace for ~<strong style="color:${lvl === 'good' ? 'var(--good)' : lvl === 'warn' ? 'var(--warn)' : 'var(--bad)'}">${money(p.projected)} ${cur()}</strong> by ${new Date(p.end.getTime() - DAY).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
+      : `${Math.max(1, Math.ceil(p.elapsed))} day${Math.ceil(p.elapsed) > 1 ? 's' : ''} into the cycle — too early to project`;
+    const overallLine = Math.abs(p.spent - spentB) > 0.001
+      ? `<div class="hero-empty" style="margin-top:2px">${money(p.spent)} ${cur()} spent overall (incl. unbudgeted)</div>` : '';
     el.innerHTML = `
-      <div class="hero-label">Spent this cycle</div>
-      <div class="hero-big">${money(p.spent)} <small>${cur()}</small></div>
+      <div class="hero-label">Spent in budgets this cycle</div>
+      <div class="hero-big">${money(spentB)} <small>${cur()}</small></div>
       <div class="hero-progress"><i style="width:${Math.min(100, pct * 100)}%;background:${barColor(pct)}"></i></div>
       <div class="hero-sub">of <strong>${money(p.budget)} ${cur()}</strong> budget · ${Math.ceil(p.daysLeft)} days left</div>
-      <div class="hero-empty">On pace for ~<strong style="color:${lvl === 'good' ? 'var(--good)' : lvl === 'warn' ? 'var(--warn)' : 'var(--bad)'}">${money(p.projected)} ${cur()}</strong> by ${new Date(p.end.getTime() - DAY).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</div>
+      <div class="hero-empty">${paceLine}</div>${overallLine}
       <span class="ring ${lvl}">${ringTxt}</span>`;
   } else {
     const r = runway();
@@ -251,12 +270,12 @@ function renderAlert() {
   const r = runway();
   const p = cycleProjection();
   let msg;
-  if (state.settings.lowBalance > 0 && r.bal < state.settings.lowBalance)
+  if (state.settings.startingBalance > 0 && state.settings.lowBalance > 0 && r.bal < state.settings.lowBalance)
     msg = `⚠ Low balance — ${money(r.bal)} ${cur()} left.`;
-  else if (state.settings.runwayDays > 0 && r.days < state.settings.runwayDays)
+  else if (state.settings.startingBalance > 0 && p.elapsed >= RUNWAY_MIN_DAYS && r.bal > 0 && state.settings.runwayDays > 0 && r.days < state.settings.runwayDays)
     msg = `⚠ At this rate your money lasts ~${money(r.days, 1)} more days.`;
   else
-    msg = `🔔 On pace to spend ${money(p.projected)} ${cur()} this cycle — over your ${money(p.budget)} ${cur()} budget.`;
+    msg = `🔔 ${p.canProject ? `On pace to spend ${money(p.projected)} ${cur()} in budgeted categories` : `Already spent ${money(p.budgetedSpent)} ${cur()}`} this cycle — over your ${money(p.budget)} ${cur()} budget.`;
   banner.textContent = msg;
   maybeNotify(msg, lvl);
 }
@@ -359,7 +378,7 @@ function renderHistory() {
 function renderBudgets() {
   const spentMap = spentByCategory();
   const incMap = incomeByCategory();
-  const spent = spentThisCycle();
+  const spent = budgetedSpentThisCycle();
   const budget = totalBudget();
   $('#spentTotal').innerHTML = `${money(spent)} <small style="font-size:14px;color:var(--text-dim)">${cur()}</small>`;
   $('#budgetTotal').innerHTML = budget > 0
